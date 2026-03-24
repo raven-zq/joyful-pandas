@@ -1,112 +1,130 @@
-/**
- * Yoda BI - Professional Copilot (Gemini 1.5 Pro)
- * 适配 Cloudflare Workers & Google Generative AI API
- */
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // 路由拦截：首页渲染
+    // 1. 首页路由
     if (url.pathname === "/") {
-      return new Response(generateHTML(), {
-        headers: { "Content-Type": "text/html;charset=UTF-8" },
+      return new Response(HTML, {
+        headers: { "Content-Type": "text/html;charset=UTF-8" }
       });
     }
 
-    // 路由拦截：API 对话
-    if (url.pathname === "/api/chat" && request.method === "POST") {
+    // 2. 聊天 API 路由
+    if (url.pathname === "/api/chat") {
       try {
-        const { prompt } = await request.json();
-        if (!prompt) throw new Error("Prompt is required");
+        const body = await request.json();
+        const api_key = env.GOOGLE_API_KEY;
+        const user_prompt = body.prompt;
 
-        // 使用 v1beta 接口调用最新的 Pro 模型
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${env.GOOGLE_API_KEY}`;
+        // 模型尝试列表：从最强到最稳
+        const model_list = [
+          "gemini-1.5-pro",
+          "gemini-1.5-flash",
+          "gemini-pro"
+        ];
 
-        const response = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2048,
-            }
-          }),
-        });
+        let final_res = null;
+        let used_model_name = "";
 
-        const data = await response.json();
+        // 自动循环尝试，直到有一个成功
+        for (const model_id of model_list) {
+          const target_url = `https://generativelanguage.googleapis.com/v1beta/models/${model_id}:generateContent?key=${api_key}`;
+          
+          const response = await fetch(target_url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: user_prompt }] }]
+            })
+          });
 
-        // 增强报错处理
-        if (data.error) {
-          return new Response(JSON.stringify({ error: `Google API Error: ${data.error.message}` }), { status: 500 });
+          const result_data = await response.json();
+
+          if (!result_data.error && result_data.candidates) {
+            final_res = result_data.candidates[0].content.parts[0].text;
+            used_model_name = model_id;
+            break; // 成功获取结果，跳出循环
+          }
         }
 
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Empty response from AI.";
-        return new Response(JSON.stringify({ reply }), {
-          headers: { "Content-Type": "application/json" },
-        });
+        if (final_res) {
+          return new Response(JSON.stringify({
+            reply: final_res,
+            model: used_model_name
+          }));
+        } else {
+          return new Response(JSON.stringify({
+            reply: "所有模型均不可用，请检查 API Key 权限或区域。"
+          }), { status: 500 });
+        }
 
       } catch (err) {
-        return new Response(JSON.stringify({ error: `Worker Error: ${err.message}` }), { status: 500 });
+        return new Response(JSON.stringify({
+          reply: "Worker 运行异常: " + err.message
+        }), { status: 500 });
       }
     }
 
     return new Response("Not Found", { status: 404 });
-  },
+  }
 };
 
-/**
- * 极简、商务风格 UI (Tailwind CSS)
- */
-function generateHTML() {
-  return `
+// 界面部分
+const HTML = `
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Private BI Copilot</title>
+    <title>Yoda BI Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-[#F8FAFC] h-screen flex flex-col items-center justify-center p-4">
-    <div class="w-full max-w-2xl bg-white shadow-2xl rounded-2xl flex flex-col h-[85vh]">
-        <header class="p-4 border-b flex justify-between items-center bg-white rounded-t-2xl">
-            <span class="font-bold text-slate-800 tracking-tight">YODA <span class="text-blue-600">PRO</span> AI</span>
-            <div class="flex items-center gap-2 text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-md">
-                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div> Gemini 1.5 Pro
-            </div>
-        </header>
-        <div id="chat" class="flex-1 p-6 overflow-y-auto space-y-4 text-sm leading-relaxed"></div>
-        <div class="p-4 border-t bg-slate-50 rounded-b-2xl">
-            <div class="relative flex items-center">
-                <input type="text" id="q" onkeypress="if(event.key==='Enter')send()" 
-                    class="w-full pl-4 pr-20 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-slate-700" 
-                    placeholder="请输入你的数据分析指令...">
-                <button onclick="send()" id="btn" class="absolute right-2 bg-blue-600 text-white px-4 py-1.5 rounded-lg font-medium hover:bg-blue-700 active:scale-95 transition-all">发送</button>
-            </div>
+<body class="bg-slate-100 h-screen flex flex-col p-4">
+    <div class="max-w-2xl mx-auto w-full flex flex-col h-full bg-white shadow-xl rounded-2xl overflow-hidden">
+        <header class="bg-blue-600 text-white p-4 font-bold text-center">Yoda BI - 多模型自适应版</header>
+        <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 text-sm"></div>
+        <div class="p-4 border-t flex gap-2">
+            <input type="text" id="input" class="flex-1 border rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="请输入指令...">
+            <button onclick="send()" id="btn" class="bg-blue-600 text-white px-6 py-2 rounded-xl active:scale-95 transition-all">发送</button>
         </div>
     </div>
+
     <script>
-        const c=document.getElementById('chat'),q=document.getElementById('q'),b=document.getElementById('btn');
-        async function send(){
-            const v=q.value.trim(); if(!v||b.disabled)return;
-            q.value=''; b.disabled=true;
-            c.innerHTML+='<div class="flex justify-end"><div class="bg-blue-600 text-white p-3 rounded-xl max-w-[85%] border-none shadow-md">'+v+'</div></div>';
-            const l=document.createElement('div');
-            l.innerHTML='<div class="bg-white border border-slate-100 p-3 rounded-xl max-w-[85%] shadow-sm text-slate-400 animate-pulse italic">Thinking...</div>';
-            c.appendChild(l); c.scrollTop=c.scrollHeight;
+        const chatBox = document.getElementById('chat-box');
+        const input = document.getElementById('input');
+        const btn = document.getElementById('btn');
+
+        async function send() {
+            const text = input.value.trim();
+            if (!text || btn.disabled) return;
+
+            input.value = '';
+            btn.disabled = true;
+
+            chatBox.innerHTML += '<div class="flex justify-end"><div class="bg-blue-600 text-white p-3 rounded-xl max-w-[85%]">' + text + '</div></div>';
+            
+            const loading = document.createElement('div');
+            loading.innerHTML = '<div class="bg-white border p-3 rounded-xl max-w-[85%] text-gray-400 italic">正在匹配可用模型并思考...</div>';
+            chatBox.appendChild(loading);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
             try {
-                const res=await fetch('/api/chat',{method:'POST',body:JSON.stringify({prompt:v}),headers:{'Content-Type':'application/json'}});
-                const data=await res.json();
-                if(data.error) throw new Error(data.error);
-                l.innerHTML='<div class="bg-white border border-slate-100 p-3 rounded-xl max-w-[85%] shadow-sm text-slate-700 shadow-sm">'+data.reply.replace(/\\n/g, '<br>')+'</div>';
-            } catch(e) {
-                l.innerHTML='<div class="bg-red-50 text-red-600 p-3 rounded-xl max-w-[85%] text-xs border border-red-100">'+e.message+'</div>';
+                const res = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: text })
+                });
+                const data = await res.json();
+                loading.innerHTML = '<div class="bg-white border p-3 rounded-xl text-slate-700 shadow-sm">' + data.reply.replace(/\\n/g, '<br>') + '</div><div class="text-[10px] text-gray-400 mt-1 ml-1">响应模型: ' + (data.model || 'Unknown') + '</div>';
+            } catch (e) {
+                loading.innerHTML = '<div class="text-red-500 text-xs">请求失败，请检查网络。</div>';
             }
-            b.disabled=false; c.scrollTop=c.scrollHeight;
+            
+            btn.disabled = false;
+            chatBox.scrollTop = chatBox.scrollHeight;
         }
+        input.addEventListener('keypress', (e) => { if(e.key === 'Enter') send(); });
     </script>
 </body>
-</html>`;
-}
+</html>
+`;
