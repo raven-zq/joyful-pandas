@@ -1,77 +1,34 @@
 export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname === "/") {
-      return new Response(HTML, { headers: { "Content-Type": "text/html;charset=UTF-8" } });
-    }
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    if (url.pathname === "/") return new Response(HTML, {headers:{"Content-Type":"text/html;charset=UTF-8"}});
     if (url.pathname === "/api/chat") {
       try {
-        const body = await request.json();
-        const apiResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${env.GOOGLE_API_KEY}`, {
+        const body = await req.json();
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${env.GOOGLE_API_KEY}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: body.prompt }] }] })
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({contents:[{parts:[{text:body.prompt}]}]})
         });
-        const data = await apiResp.json();
-        return new Response(JSON.stringify(data));
+        
+        const data = await resp.json();
+        
+        // 诊断逻辑：如果谷歌报错，直接把原样错误传回手机
+        if (data.error) {
+          return new Response(JSON.stringify({reply: "谷歌 API 报错: " + data.error.message}), {status: 200});
+        }
+        
+        if (!data.candidates || data.candidates.length === 0) {
+          return new Response(JSON.stringify({reply: "模型拒绝回答，可能是触发了安全审核。"}), {status: 200});
+        }
+
+        return new Response(JSON.stringify({reply: data.candidates[0].content.parts[0].text}));
       } catch (e) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+        return new Response(JSON.stringify({reply: "Worker 运行异常: " + e.message}));
       }
     }
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", {status:404});
   }
 };
 
-const HTML = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yoda BI Copilot</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-100 h-screen flex flex-col">
-    <header class="bg-white shadow-sm p-4 font-bold text-center text-gray-700 border-b-2 border-blue-500">
-        Gemini 1.5 Pro 最强免费版
-    </header>
-    <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-4">
-        <div class="bg-blue-100 p-3 rounded-lg max-w-[80%] text-sm text-blue-800">
-            你好！这是为你定制的专用接口。已接入 Gemini 1.5 Pro，请开始提问。
-        </div>
-    </div>
-    <div class="p-4 bg-white border-t flex gap-2">
-        <input type="text" id="q" class="flex-1 border rounded-lg px-3 py-2 outline-none focus:border-blue-500" placeholder="输入问题...">
-        <button onclick="send()" id="btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg">发送</button>
-    </div>
-    <script>
-        async function send() {
-            const input = document.getElementById('q');
-            const btn = document.getElementById('btn');
-            const chat = document.getElementById('chat');
-            if(!input.value || btn.disabled) return;
-            
-            const text = input.value;
-            input.value = '';
-            btn.disabled = true;
-            chat.innerHTML += '<div class="self-end bg-blue-600 text-white p-3 rounded-lg max-w-[80%] ml-auto">' + text + '</div>';
-            
-            const loading = document.createElement('div');
-            loading.className = 'bg-gray-200 p-3 rounded-lg max-w-[80%] text-gray-600 animate-pulse';
-            loading.innerText = '思考中...';
-            chat.appendChild(loading);
-
-            try {
-                const r = await fetch('/api/chat', {method:'POST', body:JSON.stringify({prompt: text})});
-                const d = await r.json();
-                loading.innerText = d.candidates[0].content.parts[0].text;
-                loading.classList.remove('animate-pulse', 'bg-gray-200');
-                loading.classList.add('bg-white', 'shadow-sm');
-            } catch (e) {
-                loading.innerText = '错误: ' + e.message;
-            }
-            btn.disabled = false;
-            chat.scrollTop = chat.scrollHeight;
-        }
-    </script>
-</body>
-</html>`;
+const HTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Yoda BI</title><script src="https://cdn.tailwindcss.com"></script></head><body class="bg-slate-50 h-screen flex flex-col p-4"><div id="c" class="flex-1 overflow-y-auto space-y-4 mb-4"></div><div class="flex gap-2"><input id="q" class="flex-1 p-3 rounded-xl border border-blue-200 outline-none focus:ring-2 focus:ring-blue-500" placeholder="问问数据迁移..."><button onclick="send()" id="b" class="bg-blue-600 text-white px-6 rounded-xl">发送</button></div><script>async function send(){const q=document.getElementById('q'),c=document.getElementById('c'),b=document.getElementById('b'),v=q.value;if(!v||b.disabled)return;q.value='';b.disabled=true;c.innerHTML+='<div class="p-3 bg-blue-600 text-white rounded-lg self-end ml-auto max-w-[80%]">'+v+'</div>';const l=document.createElement('div');l.className='p-3 bg-white border rounded-lg max-w-[80%]';l.innerText='思考中...';c.appendChild(l);try{const r=await fetch('/api/chat',{method:'POST',body:JSON.stringify({prompt:v})});const d=await r.json();l.innerText=d.reply;}catch(e){l.innerText='请求失败: '+e.message;}b.disabled=false;c.scrollTop=c.scrollHeight;}<\/script></body></html>`;
