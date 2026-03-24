@@ -1,114 +1,112 @@
+/**
+ * Yoda BI - Professional Copilot (Gemini 1.5 Pro)
+ * 适配 Cloudflare Workers & Google Generative AI API
+ */
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // 1. 首页：渲染聊天界面
+    // 路由拦截：首页渲染
     if (url.pathname === "/") {
-      return new Response(HTML, {
-        headers: { "Content-Type": "text/html;charset=UTF-8" }
+      return new Response(generateHTML(), {
+        headers: { "Content-Type": "text/html;charset=UTF-8" },
       });
     }
 
-    // 2. 接口：处理与 Gemini 的通信
-    if (url.pathname === "/api/chat") {
+    // 路由拦截：API 对话
+    if (url.pathname === "/api/chat" && request.method === "POST") {
       try {
-        const body = await request.json();
-        const apiSecret = env.GOOGLE_API_KEY;
+        const { prompt } = await request.json();
+        if (!prompt) throw new Error("Prompt is required");
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiSecret}`, {
+        // 使用 v1beta 接口调用最新的 Pro 模型
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${env.GOOGLE_API_KEY}`;
+
+        const response = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: body.prompt }] }]
-          })
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 2048,
+            }
+          }),
         });
 
         const data = await response.json();
 
-        // 诊断逻辑：如果 API 返回报错（如 Key 错误）
+        // 增强报错处理
         if (data.error) {
-          return new Response(JSON.stringify({ reply: "API 报错: " + data.error.message }));
+          return new Response(JSON.stringify({ error: `Google API Error: ${data.error.message}` }), { status: 500 });
         }
 
-        // 诊断逻辑：如果 API 返回为空（如安全过滤）
-        if (!data.candidates || data.candidates.length === 0) {
-          return new Response(JSON.stringify({ reply: "Gemini 拒绝回答（可能触发安全审核）" }));
-        }
-
-        const result = data.candidates[0].content.parts[0].text;
-        return new Response(JSON.stringify({ reply: result }));
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Empty response from AI.";
+        return new Response(JSON.stringify({ reply }), {
+          headers: { "Content-Type": "application/json" },
+        });
 
       } catch (err) {
-        return new Response(JSON.stringify({ reply: "Worker 内部错误: " + err.message }));
+        return new Response(JSON.stringify({ error: `Worker Error: ${err.message}` }), { status: 500 });
       }
     }
 
     return new Response("Not Found", { status: 404 });
-  }
+  },
 };
 
-// 简单的 UI 界面字符串
-const HTML = `
+/**
+ * 极简、商务风格 UI (Tailwind CSS)
+ */
+function generateHTML() {
+  return `
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yoda BI Assistant</title>
+    <title>Private BI Copilot</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 h-screen flex flex-col p-4">
-    <div class="max-w-2xl mx-auto w-full flex flex-col h-full bg-white shadow-lg rounded-xl overflow-hidden">
-        <header class="bg-blue-600 text-white p-4 font-bold text-center">Yoda BI - Gemini 1.5 Pro</header>
-        <div id="chat-box" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50"></div>
-        <div class="p-4 border-t flex gap-2">
-            <input type="text" id="input" class="flex-1 border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500" placeholder="输入问题...">
-            <button onclick="send()" id="btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">发送</button>
+<body class="bg-[#F8FAFC] h-screen flex flex-col items-center justify-center p-4">
+    <div class="w-full max-w-2xl bg-white shadow-2xl rounded-2xl flex flex-col h-[85vh]">
+        <header class="p-4 border-b flex justify-between items-center bg-white rounded-t-2xl">
+            <span class="font-bold text-slate-800 tracking-tight">YODA <span class="text-blue-600">PRO</span> AI</span>
+            <div class="flex items-center gap-2 text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-md">
+                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div> Gemini 1.5 Pro
+            </div>
+        </header>
+        <div id="chat" class="flex-1 p-6 overflow-y-auto space-y-4 text-sm leading-relaxed"></div>
+        <div class="p-4 border-t bg-slate-50 rounded-b-2xl">
+            <div class="relative flex items-center">
+                <input type="text" id="q" onkeypress="if(event.key==='Enter')send()" 
+                    class="w-full pl-4 pr-20 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-slate-700" 
+                    placeholder="请输入你的数据分析指令...">
+                <button onclick="send()" id="btn" class="absolute right-2 bg-blue-600 text-white px-4 py-1.5 rounded-lg font-medium hover:bg-blue-700 active:scale-95 transition-all">发送</button>
+            </div>
         </div>
     </div>
-
     <script>
-        const chatBox = document.getElementById('chat-box');
-        const input = document.getElementById('input');
-        const btn = document.getElementById('btn');
-
-        async function send() {
-            const text = input.value.trim();
-            if (!text || btn.disabled) return;
-
-            input.value = '';
-            btn.disabled = true;
-
-            // 显示用户消息
-            chatBox.innerHTML += \`<div class="flex justify-end"><div class="bg-blue-600 text-white p-3 rounded-lg max-w-[85%] shadow-sm">\${text}</div></div>\`;
-            
-            // 显示加载状态
-            const loading = document.createElement('div');
-            loading.className = 'flex justify-start';
-            loading.innerHTML = '<div class="bg-white border p-3 rounded-lg max-w-[85%] shadow-sm text-gray-400">思考中...</div>';
-            chatBox.appendChild(loading);
-            chatBox.scrollTop = chatBox.scrollHeight;
-
+        const c=document.getElementById('chat'),q=document.getElementById('q'),b=document.getElementById('btn');
+        async function send(){
+            const v=q.value.trim(); if(!v||b.disabled)return;
+            q.value=''; b.disabled=true;
+            c.innerHTML+='<div class="flex justify-end"><div class="bg-blue-600 text-white p-3 rounded-xl max-w-[85%] border-none shadow-md">'+v+'</div></div>';
+            const l=document.createElement('div');
+            l.innerHTML='<div class="bg-white border border-slate-100 p-3 rounded-xl max-w-[85%] shadow-sm text-slate-400 animate-pulse italic">Thinking...</div>';
+            c.appendChild(l); c.scrollTop=c.scrollHeight;
             try {
-                const res = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: text })
-                });
-                const data = await res.json();
-                loading.querySelector('div').innerText = data.reply;
-                loading.querySelector('div').classList.remove('text-gray-400');
-            } catch (e) {
-                loading.querySelector('div').innerText = '请求失败，请检查网络或 API 设置';
-                loading.querySelector('div').classList.add('text-red-500');
+                const res=await fetch('/api/chat',{method:'POST',body:JSON.stringify({prompt:v}),headers:{'Content-Type':'application/json'}});
+                const data=await res.json();
+                if(data.error) throw new Error(data.error);
+                l.innerHTML='<div class="bg-white border border-slate-100 p-3 rounded-xl max-w-[85%] shadow-sm text-slate-700 shadow-sm">'+data.reply.replace(/\\n/g, '<br>')+'</div>';
+            } catch(e) {
+                l.innerHTML='<div class="bg-red-50 text-red-600 p-3 rounded-xl max-w-[85%] text-xs border border-red-100">'+e.message+'</div>';
             }
-            
-            btn.disabled = false;
-            chatBox.scrollTop = chatBox.scrollHeight;
+            b.disabled=false; c.scrollTop=c.scrollHeight;
         }
-
-        input.addEventListener('keypress', (e) => { if(e.key === 'Enter') send(); });
     </script>
 </body>
-</html>
-`;
+</html>`;
+}
